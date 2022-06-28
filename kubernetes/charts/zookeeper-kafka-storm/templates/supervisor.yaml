@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ .Values.storm.supervisor.name }}
+  labels:
+    app: {{ .Values.storm.supervisor.name }}
+spec:
+  ports:
+  {{- range $i, $e := until (int $.Values.storm.supervisor.slots) }}
+  - port: {{add $i 6700}}
+    name: slot-{{ $i }}
+  {{- end }}
+  clusterIP: None # Headless Service
+  selector:
+    app: {{ .Values.storm.supervisor.name }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ .Values.storm.supervisor.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.storm.supervisor.name }} # has to match .spec.template.metadata.labels
+  replicas: {{ .Values.storm.supervisor.replicas }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.storm.supervisor.name }} # has to match .spec.selector.matchLabels
+    spec:
+      initContainers:
+      - name: nimbus-check
+        image: {{ printf "%s/%s:%s" .Values.storm.supervisor.container.imageRepository .Values.storm.supervisor.container.image .Values.storm.supervisor.container.imageVersion }}
+        command: ["/bin/sh","-c", "until storm list; do echo waiting for nimbus; sleep 10; done;"]
+        volumeMounts:
+        - name: storm-configmap
+          mountPath: {{ .Values.storm.supervisor.volumes.config.path }}
+      containers:
+      - name: {{ .Values.storm.supervisor.container.name }}
+        image: {{ printf "%s/%s:%s" .Values.storm.supervisor.container.imageRepository .Values.storm.supervisor.container.image .Values.storm.supervisor.container.imageVersion }}
+        env:
+{{- with .Values.storm.supervisor.container.env }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+        command:
+        - storm
+        - supervisor
+        - -c
+        - storm.local.hostname=$(MY_POD_NAME).supervisor
+        ports:
+        {{- range $i, $e := until (int $.Values.storm.supervisor.slots) }}
+          - containerPort: {{add $i 6700}}
+            name: slot-{{ $i }}
+        {{- end }}
+        resources:
+{{- with .Values.storm.supervisor.container.resources }}
+{{ toYaml . | indent 10 }}
+{{- end }}        
+        readinessProbe:
+          exec:
+            command:
+            {{  range .Values.storm.supervisor.container.readinessProbe.command }}
+            - {{ . }}
+            {{ end }}
+          initialDelaySeconds: {{ .Values.storm.supervisor.container.readinessProbe.initialDelaySeconds }}
+          timeoutSeconds: {{ .Values.storm.supervisor.container.readinessProbe.timeoutSeconds }}
+        livenessProbe:
+          exec:
+            command:
+            {{  range .Values.storm.supervisor.container.livenessProbe.command }}
+            - {{ . }}
+            {{ end }}
+          initialDelaySeconds: {{ .Values.storm.supervisor.container.livenessProbe.initialDelaySeconds }}
+          timeoutSeconds: {{ .Values.storm.supervisor.container.livenessProbe.timeoutSeconds }}
+        volumeMounts:
+        - name: storm-configmap
+          mountPath: {{ .Values.storm.supervisor.volumes.config.path }}
+        - name: storm-logging-config
+          mountPath: {{ .Values.storm.supervisor.volumes.log4j2conf.path }}
+        - name: data
+          mountPath: {{ .Values.storm.supervisor.volumes.localdatadir.path }}
+        - name: data-log
+          mountPath: {{ .Values.storm.supervisor.volumes.logdir.path }}
+        - name: storm-metrics
+          mountPath: {{ .Values.storm.supervisor.volumes.metricsdb.path }}
+      volumes:
+      - name: storm-configmap
+        configMap:
+          name: storm-config
+      - name: storm-logging-config
+        configMap:
+          name: storm-logging
+      - name: data
+      {{- if .Values.storm.supervisor.volumes.localdatadir.persisted }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storm.supervisor.volumes.localdatadir.persistentVolumeClaim.claimName }}
+      {{- else }}
+        emptyDir: {}
+      {{- end }}
+      - name: data-log
+      {{- if .Values.storm.supervisor.volumes.logdir.persisted }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storm.supervisor.volumes.logdir.persistentVolumeClaim.claimName }}
+      {{- else }}
+        emptyDir: {}
+      {{- end }}
+      - name: storm-metrics
+      {{- if .Values.storm.supervisor.volumes.metricsdb.persisted }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storm.supervisor.volumes.metricsdb.persistentVolumeClaim.claimName }}
+      {{- else }}
+        emptyDir: {}
+      {{- end }}

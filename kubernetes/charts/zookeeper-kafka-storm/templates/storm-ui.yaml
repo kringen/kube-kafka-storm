@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ .Values.storm.ui.name }}
+  labels:
+    app: {{ .Values.storm.ui.name }}
+spec:
+  ports:
+  - protocol: TCP
+    port: {{ .Values.storm.ui.service.port }}
+    name: {{ .Values.storm.ui.service.name }}
+  type: {{ .Values.storm.ui.service.type }}
+  selector:
+    app: {{ .Values.storm.ui.name }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ .Values.storm.ui.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.storm.ui.name }} # has to match .spec.template.metadata.labels
+  replicas: {{ .Values.storm.ui.replicas }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.storm.ui.name }} # has to match .spec.selector.matchLabels
+    spec:
+      initContainers:
+      - name: nimbus-check
+        image: {{ printf "%s/%s:%s" .Values.storm.ui.container.imageRepository .Values.storm.ui.container.image .Values.storm.ui.container.imageVersion }}
+        command: ["/bin/sh","-c", "until storm list; do echo waiting for nimbus; sleep 10; done;"]
+        volumeMounts:
+        - name: storm-configmap
+          mountPath: {{ .Values.storm.ui.volumes.config.path }}
+      containers:
+      - name: {{ .Values.storm.ui.container.name }}
+        image: {{ printf "%s/%s:%s" .Values.storm.ui.container.imageRepository .Values.storm.ui.container.image .Values.storm.ui.container.imageVersion }}
+        env:
+{{- with .Values.storm.ui.container.env }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+        command:
+        - storm
+        - ui
+        ports:
+        {{- range $i, $e := until (int $.Values.storm.ui.slots) }}
+          - containerPort: {{add $i 6700}}
+            name: slot-{{ $i }}
+        {{- end }}
+        resources:
+{{- with .Values.storm.ui.container.resources }}
+{{ toYaml . | indent 10 }}
+{{- end }}        
+        readinessProbe:
+          exec:
+            command:
+            {{  range .Values.storm.ui.container.readinessProbe.command }}
+            - {{ . }}
+            {{ end }}
+          initialDelaySeconds: {{ .Values.storm.ui.container.readinessProbe.initialDelaySeconds }}
+          timeoutSeconds: {{ .Values.storm.ui.container.readinessProbe.timeoutSeconds }}
+        livenessProbe:
+          exec:
+            command:
+            {{  range .Values.storm.ui.container.livenessProbe.command }}
+            - {{ . }}
+            {{ end }}
+          initialDelaySeconds: {{ .Values.storm.ui.container.livenessProbe.initialDelaySeconds }}
+          timeoutSeconds: {{ .Values.storm.ui.container.livenessProbe.timeoutSeconds }}
+        volumeMounts:
+        - name: storm-configmap
+          mountPath: {{ .Values.storm.ui.volumes.config.path }}
+        - name: storm-logging-config
+          mountPath: {{ .Values.storm.ui.volumes.log4j2conf.path }}
+        - name: logs
+          mountPath: {{ .Values.storm.ui.volumes.logdir.path }}
+      volumes:
+      - name: storm-configmap
+        configMap:
+          name: storm-config
+      - name: storm-logging-config
+        configMap:
+          name: storm-logging
+      - name: logs
+      {{- if .Values.storm.ui.volumes.logdir.persisted }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.storm.ui.volumes.logdir.persistentVolumeClaim.claimName }}
+      {{- else }}
+        emptyDir: {}
+      {{- end }}

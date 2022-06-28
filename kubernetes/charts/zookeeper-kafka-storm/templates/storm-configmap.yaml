@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storm-config
+  namespace: {{ .Values.namespace }}
+data:
+  storm.yaml: |-
+    storm.zookeeper.servers:
+    {{- range $i, $e := until (int $.Values.zookeeper.replicas) }}
+    - zookeeper-{{ $i }}.zookeeper
+    {{- end }}
+    storm.zookeeper.port: {{ $.Values.zookeeper.port }}
+    nimbus.seeds:
+    {{- range $i, $e := until (int $.Values.storm.nimbus.replicas) }}
+    - nimbus-{{ $i }}.nimbus
+    {{- end }}
+    nimbus.thrift.port: {{ $.Values.storm.nimbus.port }}
+    storm.log4j2.conf.dir: {{ $.Values.storm.nimbus.volumes.log4j2conf.path }}
+    storm.local.dir: {{ $.Values.storm.nimbus.volumes.localdatadir.path }}
+    storm.log.dir: {{ $.Values.storm.nimbus.volumes.logdir.path }}
+    nimbus.childopts: {{ $.Values.storm.nimbus.childopts }}
+    supervisor.childopts: {{ $.Values.storm.supervisor.childopts }}
+    ui.childopts: {{ $.Values.storm.ui.childopts }}
+    worker.childopts: {{ $.Values.storm.supervisor.worker.childopts }}
+    worker.heap.memory.mb: {{ $.Values.storm.supervisor.worker.heap_memory_mb }}
+    storm.metricstore.rocksdb.location: {{ $.Values.storm.nimbus.volumes.metricsdb.path }}
+    supervisor.slots.ports:
+    {{- range $i, $e := until (int $.Values.storm.supervisor.slots) }}
+      - {{add $i 6700}}
+    {{- end }}
+    ui.header.buffer.bytes: {{ $.Values.storm.ui.header.bufferbytes }}
+    supervisor.memory.capacity.mb: {{ $.Values.storm.supervisor.memory_capacity_mb }}
+    #By convention 1 cpu core should be about 100, but this can be adjusted if needed
+    # using 100 makes it simple to set the desired value to the capacity measurement
+    # for single threaded bolts
+    supervisor.cpu.capacity: {{mul $.Values.storm.supervisor.cpu_capacity_millicores 100}}
+    topology.fall.back.on.java.serialization: {{ $.Values.storm.topology.javaserialization }}
+    topology.disable.loadaware.messaging: {{ $.Values.storm.topology.loadaware.disablemessaging }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storm-logging
+  namespace: {{ .Values.namespace }}
+data:
+  {{- $files := .Files }}
+  {{- range tuple "cluster.xml" "worker.xml" }}
+  {{ . }}: |-
+{{ $files.Get . | indent 4 }}
+  {{- end }}
